@@ -1,7 +1,45 @@
-__pycache__
-*.pyc
-.git
-processed_chunks/
-output/
-input/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Testing
+tests/
 *.log
+
+# Data directories (not needed in container)
+output/
+other_national_laws/
+other_regulation_standards/
+processed_chunks/
+embeddings_vertexai/
+archive/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Cache
+rag_cache.db
+*.pkl.bak
