@@ -1,0 +1,13 @@
+# FastAPI and server dependencies
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+pydantic>=2.10.0
+python-dotenv>=1.0.0
+
+# Google Cloud dependencies (from rag_search.py)
+google-cloud-aiplatform>=1.38.0
+vertexai>=1.43.0
+google-api-core>=2.14.0
+
+# Additional utilities
+python-multipart==0.0.6

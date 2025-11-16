@@ -1,0 +1,39 @@
+# Git files
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+
+# Tests
+test_*.py
+*_test.py
+
+# Docs
+*.md
+!PRODUCTION_STATUS.md
+!RAG_API_GUIDE.md
+
+# Logs
+*.log

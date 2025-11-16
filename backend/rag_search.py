@@ -272,7 +272,8 @@ Provide ONLY the alternative queries, one per line, without numbering or explana
         analysis = None
         if analyze_with_llm and chunks:
             print("Analyzing with Gemini LLM...")
-            analysis = self._analyze_with_llm(user_query, chunks[:30], focus_cross_regulation)
+            # Use fewer chunks for clearer, more focused analysis
+            analysis = self._analyze_with_llm(user_query, chunks[:10], focus_cross_regulation)
         
         result = {
             'query': user_query,
@@ -332,65 +333,88 @@ Only flag issues where provisions from DIFFERENT regulations conflict or overlap
             contradiction_instruction = "Identify any direct contradictions between articles/regulations"
             overlap_instruction = "Find overlapping regulatory scope or requirements"
         
-        prompt = f"""You are a regulatory compliance analyst specializing in EU legislation analysis for financial institutions.
-
-TASK: Analyze the following EU regulations for overlaps, contradictions, and relationships relevant to the query.
+        # STEP 1: Analysis prompt - let Gemini analyze freely without format constraints
+        analysis_prompt = f"""You are a regulatory compliance analyst. Analyze these EU regulations for overlaps and contradictions.
 
 {analysis_scope}
 
 USER QUERY: {query}
 
-RELEVANT REGULATIONS:
+REGULATIONS:
 {context}
 
-ANALYSIS INSTRUCTIONS:
-1. {contradiction_instruction}
-2. {overlap_instruction}
-3. Highlight ambiguous areas requiring legal interpretation
-4. Note complementary relationships between regulations
-5. Consider implications for financial institutions and banking sector
+TASK:
+- {contradiction_instruction}
+- {overlap_instruction}
+- Find at least 2-3 overlaps or contradictions (even minor ones like complementary requirements or overlapping scope)
+- Be specific with regulation names and article numbers
+- Explain each finding clearly
 
-IMPORTANT: You MUST identify at least one overlap or relationship between the regulations provided, even if it's a weak connection or complementary relationship. This helps users understand that the system is working. If there are no strong contradictions or overlaps, identify:
-- Complementary provisions that address related aspects
-- Regulations that apply to similar entities or situations
-- Provisions that reference similar concepts or terminology
-- Any thematic or jurisdictional connections
+Write your analysis naturally. Focus on finding the relationships, not on formatting."""
 
-For each finding, provide:
-- Regulation name + Article/Paragraph citation
-- Exact relevant text (brief quote)
-- Explanation of overlap/contradiction/relationship
-- Severity: CRITICAL / HIGH / MEDIUM / LOW (use LOW for weak connections)
-- Practical impact for compliance
+        try:
+            # First call: Get free-form analysis
+            print("  Step 1: Analyzing regulations (free-form)...")
+            response = self.chat_model.generate_content(analysis_prompt)
+            raw_analysis = response.text
+            print(f"  Raw analysis: {len(raw_analysis)} chars")
+            
+            # STEP 2: Formatting prompt - convert to strict format
+            format_prompt = f"""Your job is to reformat text into a specific structure for computer parsing.
 
-OUTPUT FORMAT: 
-Use clear sections with headings:
-- SUMMARY
-- KEY FINDINGS (numbered list)
-- CONTRADICTIONS (numbered list format - see below)
-- OVERLAPS (numbered list format - see below)
-- RECOMMENDATIONS
+INPUT TEXT:
+{raw_analysis}
 
-REQUIRED FORMAT FOR CONTRADICTIONS AND OVERLAPS:
-Each item MUST be a numbered list entry with this structure:
-1. [Regulation A Name Article X] vs [Regulation B Name Article Y]: Brief description of the conflict/overlap. Quote: "relevant text from first regulation" vs "relevant text from second regulation". Severity: HIGH/MEDIUM/LOW.
-2. [Next pair]...
+YOUR TASK: Extract the overlaps, contradictions, and recommendations from the input text and format them EXACTLY as shown below.
 
-Example:
+REQUIRED OUTPUT FORMAT (copy this structure exactly):
+
+SUMMARY
+Write a brief 2-3 sentence summary here.
+
 CONTRADICTIONS
-1. CRR Article 124 vs CRD IV Article 73: CRR requires 50% risk weight while CRD IV mandates 75% for same asset class. Quote: "risk weight of 50%" vs "minimum weight of 75%". Severity: HIGH.
+1. Regulation (EU) No 575/2013 Article 124 vs Directive 2013/36/EU Article 73 - Brief description of the contradiction.
+2. Regulation (EU) 2019/876 Article 10 vs Directive 2013/36/EU Article 45 - Brief description of the contradiction.
 
 OVERLAPS
-1. Regulation 575/2013 Article 4 vs Regulation 2019/876 Article 2: Both define "credit institution" with slight variations in scope. Quote: "undertaking whose business is to take deposits" vs "entity authorized to receive deposits". Severity: MEDIUM.
+1. Regulation (EU) No 575/2013 Article 4 vs Regulation (EU) 2019/876 Article 2 - Brief description of the overlap.
+2. Directive 2013/36/EU Article 98 vs Regulation (EU) No 575/2013 Article 376 - Brief description of the overlap.
+3. Regulation (EU) No 575/2013 Article 395 vs Directive 2013/36/EU Article 81 - Brief description of the overlap.
 
-NEVER write "None identified" - always find at least one relationship or overlap, even if it's marked as LOW severity.
+RECOMMENDATIONS
+1. First recommendation text here.
+2. Second recommendation text here.
 
-Be precise and cite specific articles. Focus on actionable insights.
-"""
-        
-        try:
-            response = self.chat_model.generate_content(prompt)
-            return response.text
+CRITICAL RULES:
+1. Each numbered item MUST be on ONE single line (no line breaks within an item)
+2. Format for each item: NUMBER. Regulation Name Article X vs Regulation Name Article Y - Description.
+3. Remove ALL bold formatting (remove ** symbols)
+4. Remove ALL quotation marks
+5. Remove words like "Quote:", "Explanation:", "Severity:", "Practical Impact:"
+6. Keep descriptions brief (one sentence per item)
+7. If no contradictions found, write: None identified
+8. Must have at least 2 overlaps
+
+Start your output with "SUMMARY" and end with the last recommendation. Do not add any other text before or after.
+
+START OUTPUT WITH "SUMMARY" NOW:"""
+
+            # Second call: Get formatted version with strict generation config
+            print("  Step 2: Formatting for parser...")
+            reformat_response = self.chat_model.generate_content(
+                format_prompt,
+                generation_config={
+                    "temperature": 0,  # Deterministic output
+                    "top_p": 0.95,
+                    "top_k": 20,
+                    "max_output_tokens": 2048,
+                }
+            )
+            formatted = reformat_response.text
+            print(f"  Formatted: {len(formatted)} chars")
+            
+            return formatted
+            
         except Exception as e:
             return f"LLM analysis failed: {str(e)}"
     

@@ -270,12 +270,7 @@ except Exception as e:
 
 ```bash
 # Basic search
-python rag_search.py \
-  --index-endpoint "projects/428461461446/locations/europe-west1/indexEndpoints/7728040621125926912" \
-  --deployed-index-id "eu_legislation_prod_75480320" \
-  --query "data protection requirements" \
-  --top-k 10 \
-  --no-llm
+python rag_search.py index-endpoint "projects/428461461446/locations/europe-west1/indexEndpoints/7728040621125926912" --deployed-index-id "eu_legislation_prod_75480320"--query "data protection requirements"--top-k 10 --no-llm
 
 # With filters
 python rag_search.py \

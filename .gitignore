@@ -50,3 +50,6 @@ yarn-error.log*
 # Large data files
 *.pkl
 metadata_store_production.pkl
+
+# Database files
+backend/*.db
