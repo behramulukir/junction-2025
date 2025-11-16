@@ -1,0 +1,110 @@
+# EU Legislation RAG System - Directory Structure
+# Generated: November 15, 2025
+
+Repository Root
+├── README.md                           # Main documentation
+├── config.yaml                         # Pipeline configuration
+├── Dockerfile                          # Container for deployment
+├── requirements.txt                    # Python dependencies
+├── requirements_vertexai.txt           # Vertex AI dependencies
+├── DIRECTORY_STRUCTURE.txt             # This file
+│
+├── scripts/                            # All executable scripts
+│   ├── README.md                       # Scripts documentation
+│   │
+│   ├── preprocessing/                  # Document preprocessing
+│   │   ├── preprocess_local.py         # Main preprocessing (paragraph indices)
+│   │   └── preprocess_and_upload.py    # Preprocessing with GCS upload
+│   │
+│   ├── embeddings/                     # Embedding generation
+│   │   ├── generate_embeddings.py      # Vertex AI format output
+│   │   └── generate_embeddings_parallel.py  # Parallel processing
+│   │
+│   ├── deployment/                     # Infrastructure deployment
+│   │   ├── build_vector_index.py       # Build Vertex AI index
+│   │   ├── deploy_quick.py             # Quick deployment
+│   │   └── check_deployment.py         # Deployment verification
+│   │
+│   ├── testing/                        # Tests and validation
+│   │   ├── test_comprehensive.py       # Full preprocessing test
+│   │   ├── test_embedding_format.py    # Vertex AI format validation
+│   │   ├── test_preprocessing.py       # Unit tests
+│   │   └── validate_pipeline.py        # End-to-end validation
+│   │
+│   └── utilities/                      # Helper scripts
+│       ├── extract_paragraphs.py       # Paragraph indices extraction
+│       ├── rag_search.py               # RAG search implementation
+│       ├── metadata_store.py           # Metadata utilities
+│       └── monitor_build.sh            # Build monitoring
+│
+├── docs/                               # Documentation
+│   ├── QUICK_START.md                  # Getting started guide
+│   ├── VERTEX_AI_INTEGRATION.md        # Vertex AI format spec
+│   ├── PARAGRAPH_INDICES_README.md     # Paragraph indices details
+│   ├── PIPELINE_COMPATIBILITY_SUMMARY.md  # Architecture overview
+│   ├── IMPLEMENTATION_GUIDE.md         # Implementation details
+│   ├── IMPLEMENTATION_SUMMARY.md       # Feature summary
+│   ├── RAG_PREPROCESSING_ANALYSIS.md   # RAG optimization
+│   └── QUICK_RECOMMENDATIONS.md        # Best practices
+│
+├── archive/                            # Deprecated files
+│   ├── README.md                       # Archive documentation
+│   ├── README_old.md                   # Original README
+│   ├── convert_embeddings_format.py    # DEPRECATED: No longer needed
+│   ├── convert_test_embeddings.py      # DEPRECATED: No longer needed
+│   ├── test_embeddings.jsonl           # Old test data
+│   └── *.log                           # Historical logs
+│
+├── architecture/                       # Architecture documents
+│   └── main_plan.txt                   # Original architecture plan
+│
+├── input/                              # Sample input data
+│   └── 00000dbc-76cd-11ed-9887-01aa75ed71a1/
+│       └── fmx4/
+│
+├── output/                             # EU legislation documents (61K+ files)
+│   ├── 00000dbc-76cd-11ed-9887-01aa75ed71a1/
+│   ├── 00012784-19a8-4f6a-8457-fc6291daf9cd/
+│   └── ... (61,072 document directories)
+│
+├── other_national_laws/                # Finnish national laws
+│   ├── 151_2022.di.json
+│   ├── 186_2023.di.json
+│   └── ... (.di.json files)
+│
+├── other_regulation_standards/         # International standards
+│   ├── Basel/
+│   ├── BRRD/
+│   ├── CRD/
+│   ├── CRR/
+│   ├── EBA/
+│   ├── FIVA_MOK/
+│   ├── IFRS/
+│   ├── LLL/
+│   ├── MiFID/
+│   ├── MiFIR/
+│   ├── SFDR/
+│   └── VYL/
+│
+└── processed_chunks/                   # Output: preprocessed chunks
+    ├── chunks_batch_000000.jsonl       # Batch 0 (1000 chunks)
+    ├── chunks_batch_000001.jsonl       # Batch 1
+    └── ... (334 batch files, 334K+ chunks total)
+
+GCS Storage Structure:
+gs://bof-hackathon-data-eu/
+├── processed_chunks/                   # Uploaded from local
+│   ├── chunks_batch_000000.jsonl
+│   └── ... (334 files, 919 MB)
+│
+└── embeddings_vertexai/                # To be generated
+    ├── embeddings_batch_000000.jsonl
+    └── ... (Vertex AI format with restricts)
+
+Key Metrics:
+- Total Documents: 61,072
+- Total Chunks: 334,000+
+- Data Size: 919 MB
+- Average Chunk: 1,200 tokens
+- Embedding Dimensions: 768
+- Filtering Namespaces: 5 (year, doc_type, source_type, article, language)

@@ -1,0 +1,16 @@
+# Core GCP dependencies
+google-cloud-aiplatform
+google-cloud-storage
+
+# Vector AI and ML
+vertexai
+
+# Configuration
+pyyaml
+
+# Data processing
+pandas
+numpy
+
+# Testing
+pytest
