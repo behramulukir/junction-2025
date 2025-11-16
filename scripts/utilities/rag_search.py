@@ -3,15 +3,7 @@
 RAG query system for EU legislation search
 Combines vector search with LLM analysis for finding regulatory overlaps and contradictions
 """
-
-import sys
-from pathlib import Path
-import os
-import pickle
-
-# Add current directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
-
+print("hello you mother fucker")
 from google.cloud import aiplatform
 from vertexai.language_models import TextEmbeddingModel
 import vertexai
@@ -21,20 +13,43 @@ import json
 import argparse
 import time
 from google.api_core import exceptions as gcp_exceptions
-from metadata_store import init_metadata_store, get_metadata_store
-from config_loader import get_config
+
+# Configuration
+PROJECT_ID = "428461461446"
+LOCATION = "europe-west1"
+# Production setup
+INDEX_ENDPOINT_NAME = "projects/428461461446/locations/europe-west1/indexEndpoints/7728040621125926912"
+DEPLOYED_INDEX_ID = "eu_legislation_prod_75480320"
 
 
 class EULegislationRAG:
     """RAG system for EU legislation semantic search and analysis."""
+    
+    # Risk categories for Bank of Finland use case
+    RISK_CATEGORIES = {
+        "data_privacy": ["GDPR", "personal data", "data protection", "privacy", "ePrivacy", "confidentiality"],
+        "financial_regulation": ["MiFID", "capital requirements", "banking", "financial stability", "prudential", "Basel"],
+        "consumer_protection": ["consumer rights", "unfair terms", "consumer credit", "consumer contracts"],
+        "environmental": ["emissions", "waste management", "environmental protection", "climate", "sustainability"],
+        "health_safety": ["food safety", "medical devices", "pharmaceuticals", "health", "safety standards"],
+        "market_conduct": ["competition", "market abuse", "antitrust", "cartels", "monopoly"],
+        "employment": ["working time", "employee rights", "labor conditions", "employment contracts"],
+        "telecommunications": ["telecom", "electronic communications", "spectrum", "network"],
+        "transport": ["aviation", "maritime", "road transport", "railway", "shipping"],
+        "energy": ["energy efficiency", "renewable energy", "electricity", "gas", "energy market"],
+        "trade": ["customs", "tariffs", "trade agreements", "import", "export"],
+        "taxation": ["tax", "VAT", "excise", "tax evasion", "tax avoidance"],
+        "insurance": ["insurance", "reinsurance", "Solvency", "insurance undertaking"],
+        "payments": ["payment services", "electronic money", "payment systems", "PSD2"],
+        "aml_cft": ["money laundering", "terrorist financing", "AML", "CTF", "suspicious transactions"]
+    }
     
     def __init__(self, 
                  project_id: str,
                  location: str,
                  index_endpoint_name: str,
                  deployed_index_id: str,
-                 metadata_file: str = "metadata_store_production.pkl",
-                 risk_categories: Optional[Dict] = None):
+                 metadata_file: str = "metadata_store_production.pkl"):
         """Initialize the RAG system.
         
         Args:
@@ -43,25 +58,19 @@ class EULegislationRAG:
             index_endpoint_name: Full resource name of the index endpoint
             deployed_index_id: ID of the deployed index
             metadata_file: Path to metadata pickle file
-            risk_categories: Optional risk categories dict (loaded from config if not provided)
         """
-        # Load risk categories from config if not provided
-        if risk_categories is None:
-            config = get_config()
-            risk_categories = config.get_rag_config()['risk_categories']
-        
-        self.risk_categories = risk_categories
-        
         aiplatform.init(project=project_id, location=location)
         # Initialize vertexai with us-central1 for Gemini models
         vertexai.init(project=project_id, location="us-central1")
         
         # Use text-multilingual-embedding-002 - Google's best performing model
         # Superior semantic understanding, 2048 token context, excellent for legal/regulatory text
-        self.embedding_model = TextEmbeddingModel.from_pretrained("text-multilingual-embedding-002")
+        self.embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
         
         # Try available Gemini models in order of preference
-        available_models = ["gemini-2.5-pro"]
+        # gemini-2.5-pro: Most capable, slower, more expensive
+        # gemini-2.0-flash-exp: Faster, cheaper, still very capable
+        available_models = ["gemini-2.5-pro"]  # Change to ["gemini-2.0-flash-exp"] for faster responses
         self.chat_model = None
         for model_name in available_models:
             try:
@@ -125,14 +134,11 @@ class EULegislationRAG:
         
         Args:
             query: Original user query
-            num_variations: Number of variations to generate (0 to disable)
+            num_variations: Number of variations to generate
             
         Returns:
             List of query variations
         """
-        if num_variations <= 0:
-            return []
-        
         prompt = f"""Generate {num_variations} alternative phrasings of the following search query for EU legislation.
 Keep the core intent but vary the wording, terminology, and perspective.
 Focus on regulatory and legal terminology variations.
@@ -153,32 +159,20 @@ Provide ONLY the alternative queries, one per line, without numbering or explana
               user_query: str, 
               risk_category: Optional[str] = None,
               year_filter: Optional[int] = None,
-              language_filter: Optional[str] = None,
-              source_type_filter: Optional[str] = None,
               top_k: int = 50,
-              llm_top_k: Optional[int] = None,
               analyze_with_llm: bool = True,
               focus_cross_regulation: bool = True,
-              use_query_expansion: bool = True,
-              query_variations: int = 2,
-              use_paragraph_context: bool = True,
-              discard_unknown_metadata: bool = False) -> Dict:
+              use_query_expansion: bool = True) -> Dict:
         """Execute a search query and optionally analyze results with LLM.
         
         Args:
             user_query: Natural language query
             risk_category: Optional risk category filter
             year_filter: Optional minimum year filter (e.g., 2016)
-            language_filter: Optional language filter (e.g., 'en', 'fi', 'multi')
-            source_type_filter: Optional source type filter (e.g., 'eu_legislation', 'national_law', 'international_standard')
-            top_k: Number of similar chunks to retrieve from vector search
-            llm_top_k: Number of unique chunks to pass to LLM (if None, uses top_k)
+            top_k: Number of similar chunks to retrieve
             analyze_with_llm: Whether to analyze results with Gemini
             focus_cross_regulation: If True, only report contradictions/overlaps between different regulations, not within same regulation
             use_query_expansion: If True, generate query variations for better recall
-            query_variations: Number of query variations to generate (0 to disable expansion)
-            use_paragraph_context: If True, extract key paragraphs for better LLM context
-            discard_unknown_metadata: If True, filter out chunks with 'Metadata not available' before passing to LLM
         
         Returns:
             Dict with search results and optional LLM analysis
@@ -189,9 +183,9 @@ Provide ONLY the alternative queries, one per line, without numbering or explana
         
         # Step 1: Query expansion (optional)
         queries_to_search = [user_query]
-        if use_query_expansion and query_variations > 0:
-            print(f"Generating {query_variations} query variations for better recall...")
-            expanded_queries = self._expand_query(user_query, query_variations)
+        if use_query_expansion:
+            print("Generating query variations for better recall...")
+            expanded_queries = self._expand_query(user_query)
             queries_to_search.extend(expanded_queries)
             print(f"  Generated {len(expanded_queries)} variations")
         
@@ -265,12 +259,6 @@ Provide ONLY the alternative queries, one per line, without numbering or explana
             if risk_category and not self._matches_risk_category(metadata, risk_category):
                 continue
             
-            if language_filter and metadata.get('language') != language_filter:
-                continue
-            
-            if source_type_filter and metadata.get('source_type') != source_type_filter:
-                continue
-            
             # Use RRF score if available, otherwise use distance
             score = result_data.get('rrf_score', float(neighbor.distance))
             
@@ -282,34 +270,23 @@ Provide ONLY the alternative queries, one per line, without numbering or explana
         
         print(f"Found {len(chunks)} relevant chunks after filtering")
         
-        # Step 3: Filter for LLM (optional)
-        llm_chunks = chunks
-        if discard_unknown_metadata:
-            original_count = len(llm_chunks)
-            llm_chunks = [c for c in llm_chunks if c['metadata'].get('full_text') != 'Metadata not available']
-            print(f"Filtered out {original_count - len(llm_chunks)} chunks with unknown metadata")
-        
-        # Determine how many chunks to pass to LLM
-        effective_llm_top_k = llm_top_k if llm_top_k is not None else min(30, len(llm_chunks))
-        
-        # Step 4: LLM Analysis (optional)
+        # Step 3: LLM Analysis (optional)
         analysis = None
-        if analyze_with_llm and llm_chunks:
-            print(f"Analyzing with Gemini LLM (using top {effective_llm_top_k} chunks)...")
-            analysis = self._analyze_with_llm(user_query, llm_chunks[:effective_llm_top_k], focus_cross_regulation)
+        if analyze_with_llm and chunks:
+            print("Analyzing with Gemini LLM...")
+            # Using 50 chunks for analysis (good balance of depth vs speed)
+            analysis = self._analyze_with_llm(user_query, chunks[:50], focus_cross_regulation)
         
         result = {
             'query': user_query,
             'filters': {
                 'risk_category': risk_category,
-                'year_filter': year_filter,
-                'language_filter': language_filter,
-                'source_type_filter': source_type_filter
+                'year_filter': year_filter
             },
             'num_results': len(chunks),
-            'top_chunks': chunks[:10],
+            'top_chunks': chunks,  # Return all chunks, let the API decide how many to use
             'llm_analysis': analysis,
-            'use_paragraph_context': use_paragraph_context
+            'raw_analysis': getattr(self, '_last_raw_analysis', None)  # Store raw analysis for frontend
         }
         
         return result
@@ -324,10 +301,10 @@ Provide ONLY the alternative queries, one per line, without numbering or explana
         Returns:
             bool: True if matches
         """
-        if category not in self.risk_categories:
+        if category not in self.RISK_CATEGORIES:
             return True
         
-        keywords = self.risk_categories[category]
+        keywords = self.RISK_CATEGORIES[category]
         text = metadata.get('full_text', '').lower()
         reg_name = metadata.get('regulation_name', '').lower()
         
@@ -359,51 +336,133 @@ Only flag issues where provisions from DIFFERENT regulations conflict or overlap
             contradiction_instruction = "Identify any direct contradictions between articles/regulations"
             overlap_instruction = "Find overlapping regulatory scope or requirements"
         
-        prompt = f"""You are a regulatory compliance analyst specializing in multi-jurisdictional regulatory analysis for financial institutions.
-
-TASK: Analyze the following regulations for overlaps, contradictions, and relationships relevant to the query.
-Consider EU legislation, national laws, and international standards together.
+        # STEP 1: Analysis prompt - let Gemini analyze freely without format constraints
+        analysis_prompt = f"""You are a regulatory compliance analyst. Analyze these EU regulations for overlaps and contradictions.
 
 {analysis_scope}
 
 USER QUERY: {query}
 
-RELEVANT REGULATIONS:
+REGULATIONS:
 {context}
 
-ANALYSIS INSTRUCTIONS:
-1. {contradiction_instruction}
-2. {overlap_instruction}
-3. Highlight ambiguous areas requiring legal interpretation
-4. Note complementary relationships between regulations across jurisdictions
-5. Consider cross-references and dependencies between regulations
-6. Pay attention to source types (EU vs. National vs. International standards)
-7. Consider implications for financial institutions and banking sector
+TASK:
+- {overlap_instruction}
+- Find at least 3-5 overlaps (including contradictions, complementary requirements, or overlapping scope)
+- Be specific with regulation names and article numbers
+- Explain each finding clearly
+- Treat contradictions as a type of overlap
 
-For each finding, provide:
-- Regulation name + Article/Paragraph citation + Source Type
-- Exact relevant text (brief quote)
-- Explanation of overlap/contradiction/relationship
-- Cross-references to other regulations (if applicable)
-- Severity: CRITICAL / HIGH / MEDIUM / LOW
-- Practical impact for compliance
+Write your analysis naturally. Focus on finding the relationships, not on formatting."""
 
-OUTPUT FORMAT: 
-Use clear sections with headings:
-- SUMMARY (include source type distribution)
-- KEY FINDINGS (numbered list with source types)
-- CONTRADICTIONS (if any) - specify if cross-jurisdictional
-- OVERLAPS (if any) - note EU/national/international relationships
-- CROSS-REFERENCES (explicit regulation references found)
-- RECOMMENDATIONS (consider multi-jurisdictional compliance)
-
-Be precise and cite specific articles with source types. Focus on actionable insights.
-"""
-        
         try:
-            response = self.chat_model.generate_content(prompt)
-            return response.text
+            # First call: Get free-form analysis
+            print("\n" + "="*100)
+            print("STEP 1: FREE-FORM ANALYSIS")
+            print("="*100)
+            print("\nSending analysis prompt to AI...")
+            print(f"\nPrompt length: {len(analysis_prompt)} chars")
+            print(f"\nQuery: {query}")
+            print(f"\nNumber of chunks: {len(chunks)}")
+            
+            response = self.chat_model.generate_content(analysis_prompt)
+            raw_analysis = response.text
+            
+            print(f"\n{'='*100}")
+            print("RAW AI ANALYSIS OUTPUT (FULL)")
+            print(f"{'='*100}")
+            print(raw_analysis)
+            print(f"{'='*100}")
+            print(f"Length: {len(raw_analysis)} characters")
+            print(f"{'='*100}\n")
+            
+            # Store raw analysis for later retrieval
+            self._last_raw_analysis = raw_analysis
+            
+            # STEP 2: Formatting prompt - convert to strict format
+            print("\n" + "="*100)
+            print("STEP 2: FORMATTING FOR PARSER")
+            print("="*100)
+            print("\nSending formatting prompt to AI...")
+            
+            format_prompt = f"""Your job is to reformat text into a specific structure for computer parsing.
+
+INPUT TEXT:
+{raw_analysis}
+
+YOUR TASK: Extract the overlaps and contradictions from the input text and format them EXACTLY as shown below.
+
+REQUIRED OUTPUT FORMAT (copy this structure exactly):
+
+OVERLAPS
+1. Regulation (EU) No 575/2013 Article 4 vs Regulation (EU) 2019/876 Article 2 - Brief six sentence description of the overlap.
+2. Directive 2013/36/EU Article 98 vs Regulation (EU) No 575/2013 Article 376 - Brief six sentence description of the overlap.
+3. Regulation (EU) No 575/2013 Article 395 vs Directive 2013/36/EU Article 81 - Brief six sentence description of the overlap.
+4. Regulation (EU) No 575/2013 Article 124 vs Directive 2013/36/EU Article 73 - Brief six sentence description of the overlap.
+5. Regulation (EU) 2019/876 Article 10 vs Directive 2013/36/EU Article 45 - Brief six sentence description of the overlap.
+
+CRITICAL RULES:
+1. Your output MUST start with the word "OVERLAPS" on the first line
+2. Do NOT include a summary, recommendations, or any other sections
+3. Each numbered item MUST be on ONE single line (no line breaks within an item)
+4. Format for each item: NUMBER. Regulation Name Article X vs Regulation Name Article Y - Description.
+5. Remove ALL bold formatting (remove ** symbols)
+6. Remove ALL quotation marks
+7. Include contradictions as overlaps
+8. Must have at least 3 overlaps
+
+Your first word must be "OVERLAPS". Start now:"""
+
+            # Second call: Get formatted version with strict generation config
+            reformat_response = self.chat_model.generate_content(
+                format_prompt,
+                generation_config={
+                    "temperature": 0,  # Deterministic output
+                    "top_p": 0.95,
+                    "top_k": 20,
+                    "max_output_tokens": 4096,  # Increased for longer outputs
+                }
+            )
+            
+            # Check if response was truncated
+            print(f"\n{'='*100}")
+            print("CHECKING AI RESPONSE METADATA")
+            print(f"{'='*100}")
+            
+            if hasattr(reformat_response, 'candidates') and reformat_response.candidates:
+                candidate = reformat_response.candidates[0]
+                finish_reason = candidate.finish_reason
+                print(f"Finish reason: {finish_reason}")
+                print(f"Finish reason name: {candidate.finish_reason.name if hasattr(candidate.finish_reason, 'name') else 'N/A'}")
+                
+                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                    print(f"Number of parts: {len(candidate.content.parts)}")
+                    for i, part in enumerate(candidate.content.parts):
+                        if hasattr(part, 'text'):
+                            print(f"Part {i} length: {len(part.text)} chars")
+                
+                if finish_reason != 1:  # 1 = STOP (natural completion)
+                    print(f"⚠️  WARNING: Response may be incomplete!")
+            
+            formatted = reformat_response.text
+            
+            print(f"\n{'='*100}")
+            print("FORMATTED AI OUTPUT (FULL - NO TRUNCATION)")
+            print(f"{'='*100}")
+            print(formatted)
+            print(f"{'='*100}")
+            print(f"Total length: {len(formatted)} characters")
+            print(f"Ends with: ...{formatted[-100:] if len(formatted) > 100 else formatted}")
+            print(f"{'='*100}\n")
+            
+            return formatted
+            
         except Exception as e:
+            print(f"\n{'='*100}")
+            print("ERROR IN LLM ANALYSIS")
+            print(f"{'='*100}")
+            print(f"Error: {str(e)}")
+            print(f"{'='*100}\n")
             return f"LLM analysis failed: {str(e)}"
     
     def _format_chunks_for_llm(self, chunks: List[Dict]) -> str:
@@ -427,48 +486,18 @@ Be precise and cite specific articles with source types. Focus on actionable ins
             if meta.get('article_number'):
                 citation_parts.append(f"Article {meta['article_number']}")
             if meta.get('paragraph_numbers') and meta['paragraph_numbers']:
-                citation_parts.append(f"Paras {', '.join(str(p) for p in meta['paragraph_numbers'][:3])}")
+                citation_parts.append(f"Paragraphs {', '.join(meta['paragraph_numbers'])}")
             
             citation = " | ".join(citation_parts) if citation_parts else "Unknown Source"
             
-            # Extract key paragraphs if paragraph_indices available
-            text = meta.get('full_text', 'No text available')
-            paragraph_info = ""
-            
-            if meta.get('paragraph_indices') and len(meta['paragraph_indices']) > 1:
-                # Use first 2-3 paragraphs for focused context
-                full_text = meta['full_text']
-                key_paragraphs = []
-                for start, end in meta['paragraph_indices'][:3]:
-                    para = full_text[start:end]
-                    if len(para) > 20:  # Skip very short paragraphs
-                        key_paragraphs.append(para)
-                
-                if key_paragraphs:
-                    text = "\n\n".join(key_paragraphs)
-                    paragraph_info = f" [{len(meta['paragraph_indices'])} paragraphs, showing first {len(key_paragraphs)}]"
-            
             # Limit text length for context window
+            text = meta.get('full_text', 'No text available')
             if len(text) > 800:
                 text = text[:800] + "..."
             
-            # Build metadata line with new fields
-            metadata_parts = [
-                f"Year: {meta.get('year', 'N/A')}",
-                f"Type: {meta.get('doc_type', 'Unknown')}",
-                f"Source: {meta.get('source_type', 'unknown')}",
-                f"Lang: {meta.get('language', 'en')}",
-                f"Chunk: {meta.get('chunk_type', 'unknown')}"
-            ]
-            
-            # Add regulation references if available
-            reg_refs = meta.get('regulation_refs', [])
-            if reg_refs:
-                metadata_parts.append(f"Refs: {', '.join(reg_refs[:3])}{'...' if len(reg_refs) > 3 else ''}")
-            
             formatted.append(f"""
-[CHUNK {i}] {citation}{paragraph_info}
-{' | '.join(metadata_parts)}
+[CHUNK {i}] {citation}
+Year: {meta.get('year', 'N/A')} | Type: {meta.get('doc_type', 'Unknown')}
 Similarity: {chunk['score']:.3f}
 
 {text}
@@ -487,22 +516,10 @@ Similarity: {chunk['score']:.3f}
         print(f"SEARCH RESULTS")
         print(f"{'='*80}")
         print(f"Query: {result['query']}")
-        
-        # Show active filters
-        filters = result['filters']
-        active_filters = []
-        if filters.get('risk_category'):
-            active_filters.append(f"Risk: {filters['risk_category']}")
-        if filters.get('year_filter'):
-            active_filters.append(f"Year >= {filters['year_filter']}")
-        if filters.get('language_filter'):
-            active_filters.append(f"Lang: {filters['language_filter']}")
-        if filters.get('source_type_filter'):
-            active_filters.append(f"Source: {filters['source_type_filter']}")
-        
-        if active_filters:
-            print(f"Filters: {' | '.join(active_filters)}")
-        
+        if result['filters']['risk_category']:
+            print(f"Risk Category: {result['filters']['risk_category']}")
+        if result['filters']['year_filter']:
+            print(f"Year Filter: >= {result['filters']['year_filter']}")
         print(f"Total Results: {result['num_results']}")
         
         print(f"\n{'─'*80}")
@@ -512,34 +529,8 @@ Similarity: {chunk['score']:.3f}
         for i, chunk in enumerate(result['top_chunks'][:5], 1):
             meta = chunk['metadata']
             print(f"\n{i}. {meta.get('regulation_name', 'Unknown')}")
-            
-            # First line: Article, Year, Score
-            info_parts = [
-                f"Article: {meta.get('article_number', 'N/A')}",
-                f"Year: {meta.get('year', 'N/A')}",
-                f"Score: {chunk['score']:.3f}"
-            ]
-            print(f"   {' | '.join(info_parts)}")
-            
-            # Second line: Source, Language, Chunk Type
-            meta_parts = [
-                f"Source: {meta.get('source_type', 'unknown')}",
-                f"Lang: {meta.get('language', 'en')}",
-                f"Type: {meta.get('chunk_type', 'unknown')}"
-            ]
-            
-            # Add paragraph count if available
-            if meta.get('paragraph_indices'):
-                meta_parts.append(f"Paragraphs: {len(meta['paragraph_indices'])}")
-            
-            print(f"   {' | '.join(meta_parts)}")
-            
-            # Show regulation references if available
-            reg_refs = meta.get('regulation_refs', [])
-            if reg_refs:
-                print(f"   Cross-refs: {', '.join(reg_refs[:3])}{'...' if len(reg_refs) > 3 else ''}")
-            
-            # Show text preview
+            print(f"   Article: {meta.get('article_number', 'N/A')} | Year: {meta.get('year', 'N/A')}")
+            print(f"   Score: {chunk['score']:.3f}")
             print(f"   Text: {meta.get('full_text', '')[:150]}...")
         
         if result['llm_analysis']:
@@ -552,43 +543,19 @@ Similarity: {chunk['score']:.3f}
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description='Query EU legislation using RAG system',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Environment Support:
-  Set APP_ENV environment variable to switch configurations:
-    export APP_ENV=development   # Use dev config
-    export APP_ENV=staging       # Use staging config  
-    export APP_ENV=production    # Use production config (default)
-
-Examples:
-  # Query with default settings
-  python rag_search.py --index-endpoint <endpoint> --query "GDPR data protection"
-  
-  # With filters
-  python rag_search.py --index-endpoint <endpoint> --query "Banking regulation" \\
-    --risk-category financial_regulation --year-filter 2018
-  
-  # Fast mode (no LLM, no query expansion)
-  python rag_search.py --index-endpoint <endpoint> --query "MiFID II" \\
-    --no-llm --no-query-expansion
-        """
-    )
-    parser.add_argument(
-        '--env',
-        type=str,
-        choices=['development', 'staging', 'production'],
-        help='Environment (overrides APP_ENV variable)'
+        description='Query EU legislation using RAG system'
     )
     parser.add_argument(
         '--project-id',
         type=str,
-        help='GCP project ID (overrides config)'
+        default=PROJECT_ID,
+        help='GCP project ID'
     )
     parser.add_argument(
         '--location',
         type=str,
-        help='GCP region (overrides config)'
+        default=LOCATION,
+        help='GCP region'
     )
     parser.add_argument(
         '--index-endpoint',
@@ -599,7 +566,8 @@ Examples:
     parser.add_argument(
         '--deployed-index-id',
         type=str,
-        help='Deployed index ID (overrides config, default: eu_legislation_deployed)'
+        default=DEPLOYED_INDEX_ID,
+        help='Deployed index ID'
     )
     parser.add_argument(
         '--query',
@@ -610,7 +578,8 @@ Examples:
     parser.add_argument(
         '--risk-category',
         type=str,
-        help='Filter by risk category (loaded from config)'
+        choices=list(EULegislationRAG.RISK_CATEGORIES.keys()),
+        help='Filter by risk category'
     )
     parser.add_argument(
         '--year-filter',
@@ -618,31 +587,10 @@ Examples:
         help='Minimum year filter (e.g., 2016)'
     )
     parser.add_argument(
-        '--language',
-        type=str,
-        choices=['en', 'fi', 'multi'],
-        help='Filter by language (en=English, fi=Finnish, multi=multilingual)'
-    )
-    parser.add_argument(
-        '--source-type',
-        type=str,
-        choices=['eu_legislation', 'national_law', 'international_standard'],
-        help='Filter by source type'
-    )
-    parser.add_argument(
         '--top-k',
         type=int,
-        help='Number of results to retrieve from vector search (default from config)'
-    )
-    parser.add_argument(
-        '--llm-top-k',
-        type=int,
-        help='Number of unique chunks to pass to LLM for analysis (default: min(30, top_k))'
-    )
-    parser.add_argument(
-        '--use-paragraphs',
-        action='store_true',
-        help='Extract key paragraphs for better LLM context (uses paragraph_indices)'
+        default=50,
+        help='Number of results to retrieve'
     )
     parser.add_argument(
         '--no-llm',
@@ -650,26 +598,9 @@ Examples:
         help='Skip LLM analysis'
     )
     parser.add_argument(
-        '--focus-cross-regulation',
-        action='store_true',
-        default=True,
-        help='Only report contradictions/overlaps between different regulations (default: True)'
-    )
-    parser.add_argument(
         '--include-same-regulation',
         action='store_true',
-        help='Include contradictions/overlaps within the same regulation (overrides --focus-cross-regulation)'
-    )
-    parser.add_argument(
-        '--discard-unknown-metadata',
-        action='store_true',
-        help='Filter out chunks with unknown metadata before passing to LLM'
-    )
-    parser.add_argument(
-        '--query-variations',
-        type=int,
-        default=2,
-        help='Number of query variations to generate (default: 2, set to 0 to disable query expansion)'
+        help='Include contradictions/overlaps within the same regulation (default: only cross-regulation)'
     )
     parser.add_argument(
         '--no-query-expansion',
@@ -679,70 +610,30 @@ Examples:
     parser.add_argument(
         '--metadata-file',
         type=str,
-        help='Path to metadata pickle file (overrides config)'
+        default='metadata_store_production.pkl',
+        help='Path to metadata pickle file (default: metadata_store_production.pkl)'
     )
     
     args = parser.parse_args()
     
-    # Load configuration
-    config = get_config(environment=args.env)
-    rag_config = config.get_rag_config()
-    
-    # Apply CLI overrides
-    project_id = args.project_id or rag_config['project_id']
-    location = args.location or rag_config['location']
-    deployed_index_id = args.deployed_index_id or 'eu_legislation_deployed'
-    metadata_file = args.metadata_file or rag_config['metadata_source']
-    top_k = args.top_k or rag_config['search']['default_top_k']
-    
-    # Validate risk category if provided
-    risk_categories = rag_config['risk_categories']
-    if args.risk_category and args.risk_category not in risk_categories:
-        print(f"ERROR: Unknown risk category '{args.risk_category}'")
-        print(f"Available categories: {', '.join(risk_categories.keys())}")
-        sys.exit(1)
-    
-    print(f"\n{'='*80}")
-    print(f"RAG System Configuration")
-    print(f"{'='*80}")
-    print(f"Environment: {config.environment}")
-    print(f"Project ID: {project_id}")
-    print(f"Embedding Model: {rag_config['embedding_model']}")
-    print(f"LLM Model: {rag_config['llm_model']}")
-    print(f"Metadata Source: {metadata_file}")
-    print(f"{'='*80}\n")
-    
     # Initialize RAG system
     rag = EULegislationRAG(
-        project_id=project_id,
-        location=location,
+        project_id=args.project_id,
+        location=args.location,
         index_endpoint_name=args.index_endpoint,
-        deployed_index_id=deployed_index_id,
-        metadata_file=metadata_file,
-        risk_categories=risk_categories
+        deployed_index_id=args.deployed_index_id,
+        metadata_file=args.metadata_file
     )
-    
-    # Determine focus_cross_regulation setting
-    focus_cross_regulation = args.focus_cross_regulation and not args.include_same_regulation
-    
-    # Determine query variations setting (--no-query-expansion overrides --query-variations)
-    query_variations = 0 if args.no_query_expansion else args.query_variations
     
     # Execute query
     result = rag.query(
         user_query=args.query,
         risk_category=args.risk_category,
         year_filter=args.year_filter,
-        language_filter=args.language,
-        source_type_filter=args.source_type,
-        top_k=top_k,
-        llm_top_k=args.llm_top_k,
+        top_k=args.top_k,
         analyze_with_llm=not args.no_llm,
-        focus_cross_regulation=focus_cross_regulation,
-        use_query_expansion=not args.no_query_expansion,
-        query_variations=query_variations,
-        use_paragraph_context=args.use_paragraphs,
-        discard_unknown_metadata=args.discard_unknown_metadata
+        focus_cross_regulation=not args.include_same_regulation,
+        use_query_expansion=not args.no_query_expansion
     )
     
     # Print results
