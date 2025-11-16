@@ -127,6 +127,7 @@ class ContradictionResponse(BaseModel):
 class AnalysisResult(BaseModel):
     overlaps: List[OverlapResponse]
     contradictions: List[ContradictionResponse]
+    full_analysis: Optional[str] = None
 
 
 # Helper Functions
@@ -247,8 +248,8 @@ async def get_regulations(request: RegulationRequest):
         # Transform to frontend format
         regulations = transform_rag_to_regulations(result)
         
-        # Convert to dict for caching
-        regulations_dict = [reg.dict() for reg in regulations]
+        # Convert to dict for caching (use model_dump instead of deprecated dict)
+        regulations_dict = [reg.model_dump() for reg in regulations]
         
         # Cache the result
         cache.cache_regulations(
@@ -271,24 +272,23 @@ async def get_regulations(request: RegulationRequest):
 
 def parse_llm_analysis(llm_text: str) -> Tuple[List[OverlapResponse], List[ContradictionResponse]]:
     """
-    Parse LLM analysis text to extract overlaps and contradictions.
+    Parse LLM analysis text to extract overlaps (contradictions are treated as overlaps).
     
     Args:
         llm_text: LLM analysis text with sections
         
     Returns:
-        Tuple of (overlaps, contradictions)
+        Tuple of (overlaps, empty list for contradictions)
     """
     overlaps = []
-    contradictions = []
+    contradictions = []  # Always empty now
     
     if not llm_text:
         print("No LLM text to parse")
         return overlaps, contradictions
     
-    # Split into sections - handle multiple header formats
-    # Only recognize these main sections
-    VALID_SECTIONS = {'SUMMARY', 'CONTRADICTIONS', 'OVERLAPS', 'RECOMMENDATIONS'}
+    # Split into sections - only look for OVERLAPS
+    VALID_SECTIONS = {'SUMMARY', 'OVERLAPS'}
     
     sections = {}
     current_section = None
@@ -316,23 +316,13 @@ def parse_llm_analysis(llm_text: str) -> Tuple[List[OverlapResponse], List[Contr
     
     print(f"Parsed sections: {list(sections.keys())}")
     
-    # Parse OVERLAPS section
+    # Parse OVERLAPS section (includes contradictions)
     overlaps_text = sections.get('OVERLAPS', '')
     if overlaps_text:
-        print(f"Parsing overlaps section ({len(overlaps_text)} chars)")
         overlaps = parse_overlaps(overlaps_text)
         print(f"Found {len(overlaps)} overlaps")
     else:
         print("No OVERLAPS section found")
-    
-    # Parse CONTRADICTIONS section
-    contradictions_text = sections.get('CONTRADICTIONS', '')
-    if contradictions_text:
-        print(f"Parsing contradictions section ({len(contradictions_text)} chars)")
-        contradictions = parse_contradictions(contradictions_text)
-        print(f"Found {len(contradictions)} contradictions")
-    else:
-        print("No CONTRADICTIONS section found")
     
     return overlaps, contradictions
 
@@ -356,8 +346,40 @@ def parse_overlaps(text: str) -> List[OverlapResponse]:
     text = re.sub(r'Severity:.*?(?=\n|$)', '', text, flags=re.IGNORECASE)  # Remove Severity: sections
     text = re.sub(r'Practical Impact:.*?(?=\n|$)', '', text, flags=re.IGNORECASE)  # Remove Practical Impact: sections
     
+    # Join lines that don't start with a number - this handles multi-line items
+    lines = text.split('\n')
+    joined_lines = []
+    current_item = ""
+    
+    for line in lines:
+        line = line.strip()
+        # Check if line starts with a number followed by period (new item)
+        if re.match(r'^\d+\.\s+', line):
+            if current_item:
+                joined_lines.append(current_item)
+            current_item = line
+        else:
+            # Continuation of previous item
+            if current_item:
+                current_item += " " + line
+            elif line:  # First line might not start with number
+                current_item = line
+    
+    # Add last item
+    if current_item:
+        joined_lines.append(current_item)
+    
+    text = '\n'.join(joined_lines)
+    
+    print(f"\nParsing overlaps section ({len(text)} chars)")
+    print(f"After joining multi-line items (FULL TEXT):\n{text}\n")
+    print("="*80)
+    
     # Split by numbered items (1., 2., etc.) at start of line
     items = re.split(r'\n\s*(\d+)\.\s+', text)
+    print(f"Split into {len(items)} parts")
+    for idx, part in enumerate(items):
+        print(f"  Part {idx}: {part[:100]}")
     
     # Items come in pairs: [number, content, number, content, ...]
     for i in range(1, len(items), 2):
@@ -367,7 +389,11 @@ def parse_overlaps(text: str) -> List[OverlapResponse]:
         idx = items[i]
         item = items[i + 1].strip()
         
+        print(f"\n  Processing overlap #{idx}:")
+        print(f"    First 200 chars: {item[:200]}")
+        
         if not item or len(item) < 10:
+            print(f"    ✗ Skipped: too short")
             continue
         
         try:
@@ -376,7 +402,7 @@ def parse_overlaps(text: str) -> List[OverlapResponse]:
             pair_match = re.search(r'^(.+?)\s+vs\s+(.+?)\s*[-–—]\s*(.+)$', item, re.DOTALL)
             
             if not pair_match:
-                print(f"  Could not parse overlap format: {item[:100]}")
+                print(f"    ✗ Could not parse overlap format (no 'vs' pattern found)")
                 continue
             
             reg1 = pair_match.group(1).strip()
@@ -511,14 +537,15 @@ async def analyze_regulations(request: AnalysisRequest):
         
         # Parse LLM analysis
         llm_analysis = result.get('llm_analysis', '')
+        raw_analysis = result.get('raw_analysis', '')
         print(f"Raw LLM Analysis (first 500 chars):\n{llm_analysis[:500]}")
         overlaps, contradictions = parse_llm_analysis(llm_analysis)
         
-        # Convert to dict for caching
-        overlaps_dict = [overlap.dict() for overlap in overlaps]
-        contradictions_dict = [contradiction.dict() for contradiction in contradictions]
+        # Convert to dict for caching (use model_dump instead of deprecated dict)
+        overlaps_dict = [overlap.model_dump() for overlap in overlaps]
+        contradictions_dict = []  # Empty since we treat everything as overlaps
         
-        # Cache the result
+        # Cache the result (note: not caching raw_analysis for now)
         cache.cache_analysis(
             request.subcategory_id,
             request.subcategory_description,
@@ -529,7 +556,8 @@ async def analyze_regulations(request: AnalysisRequest):
         
         return AnalysisResult(
             overlaps=overlaps,
-            contradictions=contradictions
+            contradictions=[],  # Always empty
+            full_analysis=raw_analysis
         )
         
     except Exception as e:

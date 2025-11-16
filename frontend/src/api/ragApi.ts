@@ -24,6 +24,7 @@ interface RegulationsResponse {
 interface AnalysisResponse {
   overlaps: Overlap[];
   contradictions: Contradiction[];
+  full_analysis?: string;
 }
 
 // Custom error class for API errors
@@ -136,6 +137,7 @@ export async function fetchAnalysis(
     return {
       overlaps: data.overlaps,
       contradictions: data.contradictions,
+      full_analysis: data.full_analysis,
     };
   } catch (error) {
     if (error instanceof ApiError) {

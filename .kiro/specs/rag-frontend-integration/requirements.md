@@ -27,7 +27,6 @@ This feature integrates the existing frontend application with the vector databa
 1. WHEN the Frontend Application loads a risk subcategory, THE Backend API SHALL query the RAG System using the subcategory description as the search query
 2. THE Backend API SHALL return between 5 and 20 regulation chunks with similarity scores above 0.75
 3. THE Frontend Application SHALL display regulation names, article numbers, similarity scores, and descriptions from the RAG System results
-4. WHERE a risk subcategory has associated keywords, THE Backend API SHALL include those keywords in the search query to improve relevance
 5. THE Backend API SHALL complete regulation searches within 2 seconds for queries without LLM analysis
 
 ### Requirement 2

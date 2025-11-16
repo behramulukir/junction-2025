@@ -41,6 +41,8 @@ export default function App() {
   const [apiRegulations, setApiRegulations] = useState<Regulation[]>([]);
   const [apiOverlaps, setApiOverlaps] = useState<Overlap[]>([]);
   const [apiContradictions, setApiContradictions] = useState<Contradiction[]>([]);
+  const [fullAnalysis, setFullAnalysis] = useState<string | null>(null);
+  const [analyzedSubcategory, setAnalyzedSubcategory] = useState<string | null>(null);
 
   // Fetch regulations when category or subcategory is selected
   useEffect(() => {
@@ -58,6 +60,8 @@ export default function App() {
     setApiRegulations([]);
     setApiOverlaps([]);
     setApiContradictions([]);
+    setFullAnalysis(null);
+    setAnalyzedSubcategory(null);
     setRegulationsError(null);
     setAnalysisError(null);
 
@@ -145,10 +149,12 @@ export default function App() {
       const analysis = await fetchAnalysis(
         subCategory.id,
         subCategory.description,
-        30
+        50
       );
       setApiOverlaps(analysis.overlaps);
       setApiContradictions(analysis.contradictions);
+      setFullAnalysis(analysis.full_analysis || null);
+      setAnalyzedSubcategory(subCategory.name);
     } catch (error) {
       if (error instanceof ApiError) {
         setAnalysisError(error.message);
@@ -789,6 +795,38 @@ export default function App() {
               )}
               
               <div className="flex-1 overflow-y-auto">
+                {/* Full Analysis Section - only show for the analyzed subcategory */}
+                {!loadingRegulations && fullAnalysis && analyzedSubcategory === selectedSubCategory && (
+                  <div>
+                    <div className="px-6 py-4 flex items-center gap-3 bg-white sticky top-0 border-b border-gray-100">
+                      <span className="text-gray-600">Full Analysis</span>
+                    </div>
+                    <button
+                      onClick={() => setSelectedIssue({
+                        id: 'full-analysis',
+                        type: 'overlap',
+                        reg1: '',
+                        reg2: '',
+                        description: fullAnalysis,
+                        category: selectedCategory || '',
+                        subCategory: selectedSubCategory || ''
+                      })}
+                      className={`w-full px-6 py-4 flex items-start gap-4 border-b border-gray-100 hover:bg-gray-50 transition-colors ${
+                        selectedIssue?.id === 'full-analysis' ? 'bg-gray-50' : ''
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0 text-left pt-0.5">
+                        <div className="text-gray-900 mb-2">
+                          Complete AI Analysis
+                        </div>
+                        <div className="text-sm text-gray-500 line-clamp-2 leading-relaxed">
+                          View the full detailed analysis from the AI
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+                )}
+                
                 {!loadingRegulations && Object.entries(groupedIssues).map(([type, issues]) => {
                   if (issues.length === 0) return null;
                   
@@ -862,28 +900,119 @@ export default function App() {
               />
               {selectedIssue ? (
                 <div className="max-w-4xl mx-auto py-12 px-16">
-                  {/* Header */}
-                  <div className="mb-10 pb-10 border-b border-gray-200">
-                    <div className="flex items-center gap-3 mb-8">
-                      <span className={`text-xs px-3 py-1.5 uppercase tracking-wide ${
-                        selectedIssue.type === 'overlap'
-                          ? 'bg-gray-100 text-gray-600'
-                          : 'bg-[#1E3A8A] text-white'
-                      }`}>
-                        {selectedIssue.type === 'overlap' ? 'Overlap' : 'Contradiction'}
-                      </span>
-                      {selectedIssue.severity && (
-                        <span className={`text-xs px-3 py-1.5 ${
-                          selectedIssue.severity === 'High'
-                            ? 'bg-red-50 text-red-700 border border-red-200'
-                            : selectedIssue.severity === 'Medium'
-                            ? 'bg-orange-50 text-orange-700 border border-orange-200'
-                            : 'bg-yellow-50 text-yellow-700 border border-yellow-200'
-                        }`}>
-                          {selectedIssue.severity}
-                        </span>
-                      )}
-                    </div>
+                  {/* Full Analysis View */}
+                  {selectedIssue.id === 'full-analysis' ? (
+                    <>
+                      <div className="mb-10 pb-10 border-b border-gray-200">
+                        <div className="flex items-center gap-3 mb-8">
+                          <span className="text-xs px-3 py-1.5 uppercase tracking-wide bg-[#1E3A8A] text-white">
+                            Full Analysis
+                          </span>
+                        </div>
+                        <h2 className="text-[#1E3A8A] text-3xl mb-5">
+                          Complete AI Analysis
+                        </h2>
+                      </div>
+                      <div className="prose prose-lg max-w-none">
+                        <div className="text-gray-700 leading-relaxed space-y-6">
+                          {selectedIssue.description.split('\n\n').map((paragraph, idx) => {
+                            // Handle headers (###, ##, #)
+                            if (paragraph.startsWith('### ')) {
+                              return (
+                                <h3 key={idx} className="text-xl font-semibold text-[#1E3A8A] mt-8 mb-4">
+                                  {paragraph.replace('### ', '')}
+                                </h3>
+                              );
+                            }
+                            if (paragraph.startsWith('## ')) {
+                              return (
+                                <h2 key={idx} className="text-2xl font-semibold text-[#1E3A8A] mt-8 mb-4">
+                                  {paragraph.replace('## ', '')}
+                                </h2>
+                              );
+                            }
+                            if (paragraph.startsWith('# ')) {
+                              return (
+                                <h1 key={idx} className="text-3xl font-bold text-[#1E3A8A] mt-8 mb-4">
+                                  {paragraph.replace('# ', '')}
+                                </h1>
+                              );
+                            }
+                            
+                            // Handle bullet points
+                            if (paragraph.includes('\n* ') || paragraph.startsWith('* ')) {
+                              const items = paragraph.split('\n').filter(line => line.trim().startsWith('* '));
+                              return (
+                                <ul key={idx} className="list-disc pl-6 space-y-2">
+                                  {items.map((item, i) => {
+                                    const text = item.replace(/^\*\s+/, '');
+                                    return (
+                                      <li key={i} className="text-gray-700" dangerouslySetInnerHTML={{ 
+                                        __html: text.replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold">$1</strong>')
+                                      }} />
+                                    );
+                                  })}
+                                </ul>
+                              );
+                            }
+                            
+                            // Handle numbered lists
+                            if (paragraph.includes('\n1. ') || paragraph.match(/^\d+\.\s+/)) {
+                              const items = paragraph.split('\n').filter(line => line.trim().match(/^\d+\.\s+/));
+                              return (
+                                <ol key={idx} className="list-decimal pl-6 space-y-2">
+                                  {items.map((item, i) => {
+                                    const text = item.replace(/^\d+\.\s+/, '');
+                                    return (
+                                      <li key={i} className="text-gray-700" dangerouslySetInnerHTML={{ 
+                                        __html: text.replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold">$1</strong>')
+                                      }} />
+                                    );
+                                  })}
+                                </ol>
+                              );
+                            }
+                            
+                            // Regular paragraph - handle bold text
+                            const processedText = paragraph
+                              .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-gray-900">$1</strong>')
+                              .replace(/\*(.*?)\*/g, '<em class="italic">$1</em>');
+                            
+                            return (
+                              <p 
+                                key={idx} 
+                                className="text-gray-700 leading-relaxed"
+                                dangerouslySetInnerHTML={{ __html: processedText }}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* Header */}
+                      <div className="mb-10 pb-10 border-b border-gray-200">
+                        <div className="flex items-center gap-3 mb-8">
+                          <span className={`text-xs px-3 py-1.5 uppercase tracking-wide ${
+                            selectedIssue.type === 'overlap'
+                              ? 'bg-gray-100 text-gray-600'
+                              : 'bg-[#1E3A8A] text-white'
+                          }`}>
+                            {selectedIssue.type === 'overlap' ? 'Overlap' : 'Contradiction'}
+                          </span>
+                          {selectedIssue.severity && (
+                            <span className={`text-xs px-3 py-1.5 ${
+                              selectedIssue.severity === 'High'
+                                ? 'bg-red-50 text-red-700 border border-red-200'
+                                : selectedIssue.severity === 'Medium'
+                                ? 'bg-orange-50 text-orange-700 border border-orange-200'
+                                : 'bg-yellow-50 text-yellow-700 border border-yellow-200'
+                            }`}>
+                              {selectedIssue.severity}
+                            </span>
+                          )}
+                        </div>
                     <h2 className="text-[#1E3A8A] text-3xl mb-5 font-mono">
                       {selectedIssue.reg1} × {selectedIssue.reg2}
                     </h2>
@@ -1022,6 +1151,8 @@ export default function App() {
                       </div>
                     </div>
                   </div>
+                  </>
+                  )}
                 </div>
               ) : (
                 <div className="h-full flex items-center justify-center">

@@ -10,17 +10,17 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend files
-COPY api_server.py .
-COPY cache_db.py .
-COPY rag_cache.db .
+COPY backend/api_server.py .
+COPY backend/cache_db.py .
+COPY backend/rag_cache.db .
 
-# Copy root directory files needed by api_server
-COPY rag_search.py .
-COPY metadata_store_production.pkl .
+# Copy files needed by api_server
+COPY backend/rag_search.py .
+COPY backend/metadata_store_production.pkl .
 
 # Set environment variables
 ENV PORT=8080

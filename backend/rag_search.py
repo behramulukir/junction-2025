@@ -3,7 +3,7 @@
 RAG query system for EU legislation search
 Combines vector search with LLM analysis for finding regulatory overlaps and contradictions
 """
-
+print("hello you mother fucker")
 from google.cloud import aiplatform
 from vertexai.language_models import TextEmbeddingModel
 import vertexai
@@ -68,7 +68,9 @@ class EULegislationRAG:
         self.embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
         
         # Try available Gemini models in order of preference
-        available_models = ["gemini-2.5-pro"]
+        # gemini-2.5-pro: Most capable, slower, more expensive
+        # gemini-2.0-flash-exp: Faster, cheaper, still very capable
+        available_models = ["gemini-2.5-pro"]  # Change to ["gemini-2.0-flash-exp"] for faster responses
         self.chat_model = None
         for model_name in available_models:
             try:
@@ -272,8 +274,8 @@ Provide ONLY the alternative queries, one per line, without numbering or explana
         analysis = None
         if analyze_with_llm and chunks:
             print("Analyzing with Gemini LLM...")
-            # Use fewer chunks for clearer, more focused analysis
-            analysis = self._analyze_with_llm(user_query, chunks[:10], focus_cross_regulation)
+            # Using 50 chunks for analysis (good balance of depth vs speed)
+            analysis = self._analyze_with_llm(user_query, chunks[:50], focus_cross_regulation)
         
         result = {
             'query': user_query,
@@ -283,7 +285,8 @@ Provide ONLY the alternative queries, one per line, without numbering or explana
             },
             'num_results': len(chunks),
             'top_chunks': chunks,  # Return all chunks, let the API decide how many to use
-            'llm_analysis': analysis
+            'llm_analysis': analysis,
+            'raw_analysis': getattr(self, '_last_raw_analysis', None)  # Store raw analysis for frontend
         }
         
         return result
@@ -344,78 +347,122 @@ REGULATIONS:
 {context}
 
 TASK:
-- {contradiction_instruction}
 - {overlap_instruction}
-- Find at least 2-3 overlaps or contradictions (even minor ones like complementary requirements or overlapping scope)
+- Find at least 3-5 overlaps (including contradictions, complementary requirements, or overlapping scope)
 - Be specific with regulation names and article numbers
 - Explain each finding clearly
+- Treat contradictions as a type of overlap
 
 Write your analysis naturally. Focus on finding the relationships, not on formatting."""
 
         try:
             # First call: Get free-form analysis
-            print("  Step 1: Analyzing regulations (free-form)...")
+            print("\n" + "="*100)
+            print("STEP 1: FREE-FORM ANALYSIS")
+            print("="*100)
+            print("\nSending analysis prompt to AI...")
+            print(f"\nPrompt length: {len(analysis_prompt)} chars")
+            print(f"\nQuery: {query}")
+            print(f"\nNumber of chunks: {len(chunks)}")
+            
             response = self.chat_model.generate_content(analysis_prompt)
             raw_analysis = response.text
-            print(f"  Raw analysis: {len(raw_analysis)} chars")
+            
+            print(f"\n{'='*100}")
+            print("RAW AI ANALYSIS OUTPUT (FULL)")
+            print(f"{'='*100}")
+            print(raw_analysis)
+            print(f"{'='*100}")
+            print(f"Length: {len(raw_analysis)} characters")
+            print(f"{'='*100}\n")
+            
+            # Store raw analysis for later retrieval
+            self._last_raw_analysis = raw_analysis
             
             # STEP 2: Formatting prompt - convert to strict format
+            print("\n" + "="*100)
+            print("STEP 2: FORMATTING FOR PARSER")
+            print("="*100)
+            print("\nSending formatting prompt to AI...")
+            
             format_prompt = f"""Your job is to reformat text into a specific structure for computer parsing.
 
 INPUT TEXT:
 {raw_analysis}
 
-YOUR TASK: Extract the overlaps, contradictions, and recommendations from the input text and format them EXACTLY as shown below.
+YOUR TASK: Extract the overlaps and contradictions from the input text and format them EXACTLY as shown below.
 
 REQUIRED OUTPUT FORMAT (copy this structure exactly):
 
-SUMMARY
-Write a brief 2-3 sentence summary here.
-
-CONTRADICTIONS
-1. Regulation (EU) No 575/2013 Article 124 vs Directive 2013/36/EU Article 73 - Brief description of the contradiction.
-2. Regulation (EU) 2019/876 Article 10 vs Directive 2013/36/EU Article 45 - Brief description of the contradiction.
-
 OVERLAPS
-1. Regulation (EU) No 575/2013 Article 4 vs Regulation (EU) 2019/876 Article 2 - Brief description of the overlap.
-2. Directive 2013/36/EU Article 98 vs Regulation (EU) No 575/2013 Article 376 - Brief description of the overlap.
-3. Regulation (EU) No 575/2013 Article 395 vs Directive 2013/36/EU Article 81 - Brief description of the overlap.
-
-RECOMMENDATIONS
-1. First recommendation text here.
-2. Second recommendation text here.
+1. Regulation (EU) No 575/2013 Article 4 vs Regulation (EU) 2019/876 Article 2 - Brief six sentence description of the overlap.
+2. Directive 2013/36/EU Article 98 vs Regulation (EU) No 575/2013 Article 376 - Brief six sentence description of the overlap.
+3. Regulation (EU) No 575/2013 Article 395 vs Directive 2013/36/EU Article 81 - Brief six sentence description of the overlap.
+4. Regulation (EU) No 575/2013 Article 124 vs Directive 2013/36/EU Article 73 - Brief six sentence description of the overlap.
+5. Regulation (EU) 2019/876 Article 10 vs Directive 2013/36/EU Article 45 - Brief six sentence description of the overlap.
 
 CRITICAL RULES:
-1. Each numbered item MUST be on ONE single line (no line breaks within an item)
-2. Format for each item: NUMBER. Regulation Name Article X vs Regulation Name Article Y - Description.
-3. Remove ALL bold formatting (remove ** symbols)
-4. Remove ALL quotation marks
-5. Remove words like "Quote:", "Explanation:", "Severity:", "Practical Impact:"
-6. Keep descriptions brief (one sentence per item)
-7. If no contradictions found, write: None identified
-8. Must have at least 2 overlaps
+1. Your output MUST start with the word "OVERLAPS" on the first line
+2. Do NOT include a summary, recommendations, or any other sections
+3. Each numbered item MUST be on ONE single line (no line breaks within an item)
+4. Format for each item: NUMBER. Regulation Name Article X vs Regulation Name Article Y - Description.
+5. Remove ALL bold formatting (remove ** symbols)
+6. Remove ALL quotation marks
+7. Include contradictions as overlaps
+8. Must have at least 3 overlaps
 
-Start your output with "SUMMARY" and end with the last recommendation. Do not add any other text before or after.
-
-START OUTPUT WITH "SUMMARY" NOW:"""
+Your first word must be "OVERLAPS". Start now:"""
 
             # Second call: Get formatted version with strict generation config
-            print("  Step 2: Formatting for parser...")
             reformat_response = self.chat_model.generate_content(
                 format_prompt,
                 generation_config={
                     "temperature": 0,  # Deterministic output
                     "top_p": 0.95,
                     "top_k": 20,
-                    "max_output_tokens": 2048,
+                    "max_output_tokens": 4096,  # Increased for longer outputs
                 }
             )
+            
+            # Check if response was truncated
+            print(f"\n{'='*100}")
+            print("CHECKING AI RESPONSE METADATA")
+            print(f"{'='*100}")
+            
+            if hasattr(reformat_response, 'candidates') and reformat_response.candidates:
+                candidate = reformat_response.candidates[0]
+                finish_reason = candidate.finish_reason
+                print(f"Finish reason: {finish_reason}")
+                print(f"Finish reason name: {candidate.finish_reason.name if hasattr(candidate.finish_reason, 'name') else 'N/A'}")
+                
+                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                    print(f"Number of parts: {len(candidate.content.parts)}")
+                    for i, part in enumerate(candidate.content.parts):
+                        if hasattr(part, 'text'):
+                            print(f"Part {i} length: {len(part.text)} chars")
+                
+                if finish_reason != 1:  # 1 = STOP (natural completion)
+                    print(f"⚠️  WARNING: Response may be incomplete!")
+            
             formatted = reformat_response.text
-            print(f"  Formatted: {len(formatted)} chars")
+            
+            print(f"\n{'='*100}")
+            print("FORMATTED AI OUTPUT (FULL - NO TRUNCATION)")
+            print(f"{'='*100}")
+            print(formatted)
+            print(f"{'='*100}")
+            print(f"Total length: {len(formatted)} characters")
+            print(f"Ends with: ...{formatted[-100:] if len(formatted) > 100 else formatted}")
+            print(f"{'='*100}\n")
             
             return formatted
             
         except Exception as e:
+            print(f"\n{'='*100}")
+            print("ERROR IN LLM ANALYSIS")
+            print(f"{'='*100}")
+            print(f"Error: {str(e)}")
+            print(f"{'='*100}\n")
             return f"LLM analysis failed: {str(e)}"
     
     def _format_chunks_for_llm(self, chunks: List[Dict]) -> str:

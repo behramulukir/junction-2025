@@ -37,3 +37,14 @@ test_*.py
 
 # Logs
 *.log
+
+# Large data directories
+data/
+new_backedn/
+deployment/
+
+# Large pickle files in root (copy to junction-2025 instead)
+/metadata_store_all.pkl
+
+# Kiro files
+.kiro/
