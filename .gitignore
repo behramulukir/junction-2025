@@ -1,0 +1,44 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data directories
+data/
+processed_chunks/
+test_processed_chunks/
+test_output/
+
+# Test and temporary files
+*.pkl
+*.log
+test_*.json
+test_*.jsonl
+
+# Shell scripts (deployment)
+*.sh
+
+# Archive
+archive/
+
+#Pythonversion pyenv
+.python-version

@@ -1,0 +1,20 @@
+Plan: EU Legislation Semantic Search & Risk Analysis System
+A scalable GCP-based pipeline to vectorize ~90K EU legislation documents, enable semantic search against risk categories, and analyze matches with LLMs for overlap detection.
+
+Steps
+Design data preprocessing pipeline to deduplicate and prepare JSON files: filter out .doc.json, .toc.fmx.json files (keeping only full-content JSONs ~48K files), flatten the pages[].paragraphs[] structure into searchable chunks with metadata (UUID, filename, document type, year, regulation/directive references extracted from titles).
+
+Set up GCP vector database infrastructure using Vertex AI Vector Search or Cloud SQL with pgvector: create embeddings using text-embedding-004 (or text-embedding-gecko) via Vertex AI, store vectors with metadata (document_id, file_path, chunk_id, doc_type, year, regulation_refs), design for ~50K-100K vectors assuming chunking strategy (whole document vs paragraph-level).
+
+Build semantic search layer to match documents against predefined risk categories: define risk category taxonomy (e.g., environmental, financial, health/safety, data privacy, trade restrictions), generate risk category embeddings, implement similarity search with configurable threshold, return ranked matches with source identifiers via metadata.
+
+Create LLM analysis pipeline using Vertex AI Gemini or Claude via GCP: batch matched documents by risk category, design prompts for overlap detection and relationship analysis, implement streaming for large document sets, output structured results (overlaps, conflicts, references between regulations).
+
+Orchestrate end-to-end workflow with Cloud Run jobs or Composer (Airflow): chunk processing for scalability (handle 90K files in batches), implement error handling and retry logic, create monitoring with Cloud Logging and metrics, design output schema for results storage (BigQuery or Cloud Storage).
+
+Further Considerations
+Chunking strategy? Full document (simpler, fewer vectors) vs paragraph-level (more precise matching but 10x+ vectors). Recommend: Hybrid approach - chunk by article/section boundaries detected via "Article N" patterns, max 512 tokens per chunk.
+
+Cost optimization? Estimate: ~$50-200 for embeddings (48K docs), ~$10-50/mo for vector DB, ~$100-500 for LLM analysis depending on match volume. Use batch processing, cache embeddings, filter matches before LLM calls.
+
+Risk category definition? Need user input on taxonomy - generic categories or domain-specific (e.g., banking regulation, chemical safety, AI/tech policy)? Suggest starting with 10-15 broad categories, expandable.

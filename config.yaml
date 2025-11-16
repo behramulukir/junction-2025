@@ -1,0 +1,252 @@
+# EU Legislation Processing Configuration
+
+# GCP Settings
+gcp:
+  project_id: "nimble-granite-478311-u2"  # Replace with your GCP project ID
+  bucket_name: "bof-hackathon-data-eu"  # EU West 1 bucket
+  output_prefix: "processed_chunks"  # Prefix for preprocessed chunks (input for embeddings)
+
+# Processing Settings
+processing:
+  # Multiple input directories - will process all of them
+  input_directories:
+    - "output"  # EU legislation (UUID structure)
+    - "other_national_laws"  # Finnish national laws (.di.json files)
+    - "other_regulation_standards"  # International standards (Basel, IFRS, etc.)
+  
+  chunk_target_tokens: 1200  # Optimized for text-multilingual-embedding-002 (2048 context)
+  min_chunk_tokens: 400      # Increased to reduce fragmentation
+  max_chunk_tokens: 1800     # 90% of 2048 window with safety buffer
+  
+  # File filtering - exclude these patterns
+  exclude_patterns:
+    - "*.doc.json"
+    - "*.toc.fmx.json"
+    - "*.doc.fmx.json"
+    - "*.toc.json"
+
+# Chunking Settings
+chunking:
+  # Regex patterns for detecting structural boundaries (English/EU)
+  article_pattern: "^Article\\s+\\d+"
+  recital_pattern: "^\\(\\d+\\)"
+  section_pattern: "^(Section|Chapter|Part|Annex)\\s+[IVX\\d]+"
+  
+  # Finnish patterns (handled in code with additional patterns)
+  # - Finnish section: "Section 1" or "1 §"
+  # - Finnish chapter: "Chapter 1" or "Luku 1"
+  # - Finnish subsection: "(1)" 
+  
+  # Merge strategy for small paragraphs
+  merge_orphans: true
+  orphan_threshold: 200  # Increased to merge more aggressively
+  
+  # NEW: Overlap configuration for better cross-chunk context
+  enable_overlap: true
+  overlap_tokens: 200        # 200-token overlap between chunks
+  overlap_strategy: "smart"  # Overlap at semantic boundaries
+  
+  # NEW: Smart chunking options
+  keep_related_articles: true      # Keep related articles together
+  max_paragraph_tokens: 1800       # Sub-chunk oversized paragraphs
+  preserve_cross_references: true  # Maintain article reference context
+
+# Output Settings
+output:
+  format: "jsonl"  # Output format
+  batch_size: 1000  # Number of chunks per file
+  include_full_text: true  # Include full document text in metadata
+  
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_file: "preprocessingnew.log"
+
+# Vector Search Configuration
+vector_search:
+  # Index settings
+  index:
+    display_name: "eu-legislation-index-production"
+    algorithm: "brute_force"  # brute_force or tree_ah
+    dimensions: 768  # text-multilingual-embedding-002
+    distance_measure: "DOT_PRODUCT_DISTANCE"
+    shard_size: "SHARD_SIZE_SMALL"  # For <500K vectors
+    
+    # TREE_AH specific (ignored for brute_force)
+    approximate_neighbors_count: 150
+    leaf_node_embedding_count: 1000
+    leaf_nodes_to_search_percent: 5.0
+  
+  # Endpoint settings
+  endpoint:
+    display_name: "eu-legislation-endpoint-production"
+    public_endpoint_enabled: true
+    
+    # Deployment settings
+    machine_type: "e2-standard-16"  # e2-standard-4 for small, e2-standard-16 for 274K
+    min_replicas: 1
+    max_replicas: 1
+    enable_access_logging: true
+  
+  # Embeddings settings
+  embeddings:
+    model: "text-multilingual-embedding-002"
+    gcs_prefix: "embeddings_vertexai_json/"  # Production embeddings
+    batch_size: 100
+    max_retries: 5
+    retry_delay: 2  # seconds
+
+# RAG Configuration
+rag:
+  # Search settings
+  search:
+    default_top_k: 50
+    max_top_k: 100
+    use_query_expansion: true
+    query_expansion_variants: 2
+    rrf_k: 60  # Reciprocal Rank Fusion constant
+  
+  # LLM settings
+  llm:
+    model: "gemini-2.5-pro"
+    analysis_chunk_limit: 30  # Max chunks to send to LLM
+    focus_cross_regulation: true  # Only flag cross-regulation issues
+    temperature: 0.1  # Low temperature for consistent analysis
+  
+  # Metadata settings
+  metadata:
+    source: "metadata_store_production.pkl"  # Production metadata store
+    fallback_sources:
+      - "processed_chunks"  # Fallback to raw chunks
+      - "test_embeddings.jsonl"  # Fallback to test data
+  
+  # Risk categories for filtering
+  risk_categories:
+    data_privacy:
+      - "GDPR"
+      - "personal data"
+      - "data protection"
+      - "privacy"
+      - "ePrivacy"
+      - "confidentiality"
+    financial_regulation:
+      - "MiFID"
+      - "capital requirements"
+      - "banking"
+      - "financial stability"
+      - "prudential"
+      - "Basel"
+    consumer_protection:
+      - "consumer rights"
+      - "unfair terms"
+      - "consumer credit"
+      - "consumer contracts"
+    environmental:
+      - "emissions"
+      - "waste management"
+      - "environmental protection"
+      - "climate"
+      - "sustainability"
+    health_safety:
+      - "food safety"
+      - "medical devices"
+      - "pharmaceuticals"
+      - "health"
+      - "safety standards"
+    market_conduct:
+      - "competition"
+      - "market abuse"
+      - "antitrust"
+      - "cartels"
+      - "monopoly"
+    employment:
+      - "working time"
+      - "employee rights"
+      - "labor conditions"
+      - "employment contracts"
+    telecommunications:
+      - "telecom"
+      - "electronic communications"
+      - "spectrum"
+      - "network"
+    transport:
+      - "aviation"
+      - "maritime"
+      - "road transport"
+      - "railway"
+      - "shipping"
+    energy:
+      - "energy efficiency"
+      - "renewable energy"
+      - "electricity"
+      - "gas"
+      - "energy market"
+    trade:
+      - "customs"
+      - "tariffs"
+      - "trade agreements"
+      - "import"
+      - "export"
+    taxation:
+      - "tax"
+      - "VAT"
+      - "excise"
+      - "tax evasion"
+      - "tax avoidance"
+    insurance:
+      - "insurance"
+      - "reinsurance"
+      - "Solvency"
+      - "insurance undertaking"
+    payments:
+      - "payment services"
+      - "electronic money"
+      - "payment systems"
+      - "PSD2"
+    aml_cft:
+      - "money laundering"
+      - "terrorist financing"
+      - "AML"
+      - "CTF"
+      - "suspicious transactions"
+
+# Environment-specific overrides
+environments:
+  development:
+    gcp:
+      project_id: "nimble-granite-478311-u2"
+      bucket_name: "bof-hackathon-data-eu"
+    vector_search:
+      index:
+        display_name: "eu-legislation-index-dev"
+      endpoint:
+        display_name: "eu-legislation-endpoint-dev"
+        machine_type: "e2-standard-2"
+    rag:
+      metadata:
+        source: "test_embeddings.json"
+  
+  staging:
+    gcp:
+      project_id: "nimble-granite-478311-u2"
+      bucket_name: "bof-hackathon-data-eu"
+    vector_search:
+      index:
+        display_name: "eu-legislation-index-staging"
+      endpoint:
+        display_name: "eu-legislation-endpoint-staging"
+        machine_type: "e2-standard-8"
+  
+  production:
+    gcp:
+      project_id: "nimble-granite-478311-u2"
+      bucket_name: "bof-hackathon-data-eu"
+    vector_search:
+      index:
+        display_name: "eu-legislation-index-production"
+      endpoint:
+        display_name: "eu-legislation-endpoint-production"
+        machine_type: "e2-standard-16"
+    rag:
+      metadata:
+        source: "metadata_store_production.pkl"
